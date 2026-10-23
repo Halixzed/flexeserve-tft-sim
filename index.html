@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flexeserve TFT Simulator</title>
+<meta name="description" content="Browser simulator of the Flexeserve hot-hold 3.5-inch 480x320 touch panel UI, rendered in RGB565.">
+<style>
+  :root {
+    --bg: #0B1526;
+    --bezel: #05090F;
+    --surface: #172A46;
+    --text: #E8EEF7;
+    --dim: #A3B4CC;
+    --line: #2B4468;
+    --accent: #FF8A3D;
+    --accent-fill: #C2410C;
+    /* CSS px per real millimetre; set by calibration (96 dpi until then). */
+    --pxmm: 3.7795;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 32px;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 14px; text-align: center; }
+  button {
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    min-height: 36px;
+    padding: 0 14px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--dim); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px 12px;
+    margin-bottom: 16px;
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--accent-fill); color: #fff; }
+  .readout { color: var(--dim); font-size: 13px; }
+  .readout.warn { color: var(--accent); }
+
+  .stage { width: 100%; overflow-x: auto; display: flex; justify-content: center; }
+  .device {
+    /* Fit mode: fill the window height on laptops; 2x the panel at most. */
+    width: min(100%, 984px, calc((100vh - 270px) * 1.5 + 24px));
+    min-width: min(100%, 320px);
+    padding: 12px;
+    background: var(--bezel);
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .45);
+  }
+  .screen { position: relative; aspect-ratio: 3 / 2; background: #000; }
+  /* Actual size: the 73.44 x 48.96 mm active area of a 3.5" 480x320 module,
+     in a 4 mm bezel. */
+  body.actual .device {
+    width: auto;
+    min-width: 0;
+    padding: calc(var(--pxmm) * 4px);
+    border-radius: calc(var(--pxmm) * 2px);
+  }
+  body.actual .screen { width: calc(var(--pxmm) * 73.44px); }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    cursor: pointer;
+  }
+  #status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dim);
+    font-size: 14px;
+    text-align: center;
+    padding: 16px;
+  }
+
+  .calib {
+    width: min(100%, 640px);
+    margin-top: 20px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(23, 42, 70, .5);
+  }
+  .calib[hidden] { display: none; }
+  .calib h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .calib p { color: var(--dim); font-size: 13px; margin: 0 0 12px; }
+  .calib .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .calib label { font-size: 13px; }
+  .calib input[type="number"] {
+    width: 84px;
+    min-height: 36px;
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0 8px;
+  }
+  .calib input[type="range"] { flex: 1; min-width: 140px; accent-color: var(--accent); }
+  .card-wrap { overflow-x: auto; padding: 4px 0 12px; }
+  .card {
+    width: calc(var(--pxmm) * 85.6px);
+    height: calc(var(--pxmm) * 53.98px);
+    border-radius: calc(var(--pxmm) * 3.18px);
+    border: 2px dashed var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dim);
+    font-size: 12px;
+    text-align: center;
+    padding: 8px;
+  }
+  .done { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
+
+  .help {
+    width: min(100%, 984px);
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px 24px;
+    color: var(--dim);
+    font-size: 13px;
+  }
+  .help h2 { color: var(--text); font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+  .help p { margin: 0; }
+  kbd {
+    font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+  <h1>Flexeserve hot-hold panel</h1>
+  <p class="sub">3.5" 480×320 touch panel, rendered in 16-bit RGB565 as on the hardware</p>
+
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="Display size">
+      <button type="button" id="mode-fit" aria-pressed="true">Fit to window</button>
+      <button type="button" id="mode-actual" aria-pressed="false">Actual size</button>
+    </div>
+    <button type="button" id="calib-open" hidden>Calibrate…</button>
+    <div class="seg" role="group" aria-label="Home rows">
+      <button type="button" id="rows-timer" aria-pressed="true">Timer rows</button>
+      <button type="button" id="rows-bar" aria-pressed="false">Bar rows</button>
+    </div>
+    <span class="readout" id="readout"></span>
+  </div>
+
+  <div class="stage">
+    <div class="device">
+      <div class="screen">
+        <canvas id="tft" width="480" height="320" aria-label="Simulated touch panel"></canvas>
+        <div id="status">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <section class="calib" id="calib" hidden aria-labelledby="calib-title">
+    <h2 id="calib-title">Calibrate to your screen</h2>
+    <p>Browsers don't know how big a pixel is, so tell this page once. Either enter your screen's diagonal, or hold a bank card against the screen and adjust until it matches the outline. The setting is saved in this browser.</p>
+    <div class="row">
+      <label for="diag">Screen diagonal</label>
+      <input type="number" id="diag" min="4" max="40" step="0.1" placeholder="14.2" inputmode="decimal">
+      <span class="readout">inches</span>
+      <button type="button" id="diag-apply">Apply</button>
+    </div>
+    <div class="row">
+      <button type="button" id="smaller" aria-label="Smaller">−</button>
+      <input type="range" id="scale" min="2" max="10" step="0.01" aria-label="Pixels per millimetre">
+      <button type="button" id="bigger" aria-label="Bigger">+</button>
+    </div>
+    <div class="card-wrap">
+      <div class="card">Bank card, 85.60 × 53.98 mm<br>Match its edges to the dashed line</div>
+    </div>
+    <button type="button" class="done" id="calib-done">Done</button>
+  </section>
+
+  <div class="help">
+    <div>
+      <h2>Using it</h2>
+      <p>Click or tap as you would the panel. Tap a drawer's temperature for its setup, its timer for the drawer, or a pan chip for that pan.</p>
+    </div>
+    <div>
+      <h2>Manager menu</h2>
+      <p>Hold the logo for 3 s. PIN <kbd>1234</kbd> for manager, <kbd>9999</kbd> for engineer.</p>
+    </div>
+    <div>
+      <h2>Cleaning mode</h2>
+      <p>Hold the clock for 2 s. Hold “Hold to unlock” to leave it.</p>
+    </div>
+  </div>
+
+<script type="module">
+  import init, { set_home_bars } from "./flexeserve_tft.js";
+  const status = document.getElementById("status");
+  // Home row style: ?home=bar in the URL, or the toolbar toggle. The same
+  // switch is on the device under Settings > Display > Home rows.
+  const rowsTimer = document.getElementById("rows-timer");
+  const rowsBar = document.getElementById("rows-bar");
+  function setRows(bars) {
+    set_home_bars(bars);
+    rowsTimer.setAttribute("aria-pressed", String(!bars));
+    rowsBar.setAttribute("aria-pressed", String(bars));
+  }
+  init().then(
+    () => {
+      status.remove();
+      setRows(new URLSearchParams(location.search).get("home") === "bar");
+      rowsTimer.onclick = () => setRows(false);
+      rowsBar.onclick = () => setRows(true);
+    },
+    (e) => {
+      status.textContent = "The simulator couldn't start in this browser. " + e;
+      console.error(e);
+    },
+  );
+
+  // Display size: fit to window, or the real panel size after calibration.
+  const KEY = "tft-view";
+  const DEFAULT_PXMM = 96 / 25.4;
+  const view = { mode: "fit", pxmm: null };
+  try { Object.assign(view, JSON.parse(localStorage.getItem(KEY)) || {}); } catch {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(view)); } catch {} };
+
+  const $ = (id) => document.getElementById(id);
+  const calib = $("calib"), scale = $("scale"), readout = $("readout");
+
+  function apply() {
+    const actual = view.mode === "actual";
+    const pxmm = view.pxmm || DEFAULT_PXMM;
+    document.body.classList.toggle("actual", actual);
+    document.documentElement.style.setProperty("--pxmm", pxmm);
+    $("mode-fit").setAttribute("aria-pressed", String(!actual));
+    $("mode-actual").setAttribute("aria-pressed", String(actual));
+    $("calib-open").hidden = !actual;
+    if (!actual) calib.hidden = true;
+    scale.value = pxmm;
+    readout.classList.toggle("warn", actual && !view.pxmm);
+    readout.textContent = !actual ? ""
+      : view.pxmm ? "73.4 × 49.0 mm, as on the panel"
+      : "Not calibrated yet: size is approximate";
+  }
+
+  function setPxmm(v) {
+    view.pxmm = Math.min(10, Math.max(2, Math.round(v * 100) / 100));
+    save();
+    apply();
+  }
+
+  $("mode-fit").onclick = () => { view.mode = "fit"; save(); apply(); };
+  $("mode-actual").onclick = () => {
+    view.mode = "actual";
+    save();
+    apply();
+    if (!view.pxmm) calib.hidden = false;
+  };
+  $("calib-open").onclick = () => { calib.hidden = !calib.hidden; };
+  $("calib-done").onclick = () => {
+    if (!view.pxmm) setPxmm(Number(scale.value));
+    calib.hidden = true;
+  };
+  scale.oninput = () => setPxmm(Number(scale.value));
+  $("smaller").onclick = () => setPxmm((view.pxmm || DEFAULT_PXMM) - 0.02);
+  $("bigger").onclick = () => setPxmm((view.pxmm || DEFAULT_PXMM) + 0.02);
+  // Diagonal in inches vs the screen's diagonal in CSS px gives px per mm.
+  // Exact for the built-in display at its current scaling setting.
+  $("diag-apply").onclick = () => {
+    const inches = Number($("diag").value);
+    if (inches >= 4 && inches <= 40) {
+      setPxmm(Math.hypot(screen.width, screen.height) / (inches * 25.4));
+    }
+  };
+  $("diag").onkeydown = (e) => { if (e.key === "Enter") $("diag-apply").click(); };
+
+  apply();
+</script>
+</body>
+</html>
